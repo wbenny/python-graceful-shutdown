@@ -467,22 +467,35 @@ class MultiProcessManager:
     ):
         try:
             #
-            # Worker function reached - signalize that bootstrapping phase
-            # is done.
+            # Because we have our own stop_event, we're going to suppress the
+            # KeyboardInterrupt during the execution of the __process_worker().
             #
-            print(f'MPM[{mp.current_process().name}]: bootstrapped')
-            process_bootstrapped_event.set()
+            # Note that if the parent process dies without setting the stop_event,
+            # this process will be unresponsive to SIGINT/SIGTERM.
+            # The only way to stop this process would be to ruthlessly kill it.
+            #
+            with DelayedKeyboardInterrupt():
+                #
+                # Worker function reached - signalize that bootstrapping phase
+                # is done.
+                #
+                print(f'MPM[{mp.current_process().name}]: bootstrapped')
+                process_bootstrapped_event.set()
 
-            MultiProcessManager.__process_worker(
-                input_queue,
-                output_queue,
-                process_bootstrapped_event,
-                process_started_event,
-                process_started_value,
-                update_condition,
-                update_done_event,
-                stop_event
-            )
+                MultiProcessManager.__process_worker(
+                    input_queue,
+                    output_queue,
+                    process_bootstrapped_event,
+                    process_started_event,
+                    process_started_value,
+                    update_condition,
+                    update_done_event,
+                    stop_event
+                )
+        #
+        # Keep in mind that the KeyboardInterrupt will get delivered
+        # after leaving from the DelayedKeyboardInterrupt() block.
+        #
         except KeyboardInterrupt:
             print(f'!!! MPM[{mp.current_process().name}]: KeyboardInterrupt')
             pass

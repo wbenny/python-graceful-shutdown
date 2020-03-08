@@ -348,6 +348,37 @@ with DelayedKeyboardInterrupt():
     p.start()
 ```
 
+### ... or ignore the `KeyboardInterrupt` in `multiprocessing.Process` workers completely
+
+If you're certain that you're going to cleanly shutdown all the
+`multiprocessing.Process` instances, you can choose to suppress the
+`KeyboardInterrupt` in the process worker function.
+
+```python
+def _process_worker(stop_event: multiprocessing.Event):
+    try:
+        with DelayedKeyboardInterrupt():
+            __process_worker(stop_event)
+
+    #
+    # Keep in mind that the KeyboardInterrupt will get delivered
+    # after leaving from the DelayedKeyboardInterrupt() block.
+    #
+    except KeyboardInterrupt:
+        print(f'[{multiprocessing.current_process().name}] ... Ctrl+C pressed, terminating ...')
+
+def __process_worker(stop_event: multiprocessing.Event):
+    stop_event.wait()
+
+#
+# ...
+#
+
+with DelayedKeyboardInterrupt():
+    p = multiprocessing.Process(target=_process_worker)
+    p.start()
+```
+
 ### Synchronize start of the `multiprocessing.Process` workers
 
 If the `KeyboardInterrupt` happens to be raised before the `target` worker
