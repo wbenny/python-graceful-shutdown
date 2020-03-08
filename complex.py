@@ -944,7 +944,7 @@ class AsyncApplication:
         #
         # Because we want clean exit, we patiently wait for completion
         # of the _wait_task (otherwise this task might get cancelled
-        # in the _cancell_all_tasks() method - which wouldn't be a problem,
+        # in the _cancel_all_tasks() method - which wouldn't be a problem,
         # but it would be dirty).
         #
         # The _wait_event & _wait_task might not exist if the application
@@ -1049,7 +1049,7 @@ class AsyncApplication:
         #
 
         to_cancel = asyncio.tasks.all_tasks(self._loop)
-        print(f'AsyncApplication._cancell_all_tasks: cancelling {len(to_cancel)} tasks ...')
+        print(f'AsyncApplication._cancel_all_tasks: cancelling {len(to_cancel)} tasks ...')
 
         if not to_cancel:
             return
