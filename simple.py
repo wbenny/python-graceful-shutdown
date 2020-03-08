@@ -73,7 +73,6 @@ class DelayedKeyboardInterrupt:
             # elif self._propagate_to_forked_processes is True:
             #   ... passthrough
 
-        self._handler_pid = os.getpid()
         print(f'!!! DelayedKeyboardInterrupt._handler: {SIGNAL_TRANSLATION_MAP[sig]} received; delaying KeyboardInterrupt')
 
 
