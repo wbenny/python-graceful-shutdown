@@ -27,13 +27,18 @@ from termination - they always have to finish.  It should be a good practice
 to make these two critical stages run as quick as possible (nobody likes
 services that take minutes to start).  However, this is not always the case.
 If - for example - initialization code tries to reach some remote file on
-very slow network, it might take a time.  Such operations shouldn't be part
+very slow network, it might take a while.  Such operations shouldn't be part
 of initialization code, but rather part of the "actual execution".
 
 This repository contains 2 scripts. Both scripts are similar at its core.
 Both scripts have no external dependencies.
 They have been tested with **Python 3.8** on Windows & Linux.
 They have very extensive logging.
+
+The intention of these scripts is to **demonstrate** how it can be done,
+and provide a reference from which you can take an inspiration (i.e.
+copy-paste).
+They are not intended to be used as packages.
 
 Try to experiment with them!
 
@@ -177,74 +182,6 @@ class DelayedKeyboardInterrupt:
 
 ```
 
-### Don't forget to catch `KeyboardInterrupt` in `multiprocessing.Process` workers
-
-When application uses `multiprocessing.Process` and the application gets
-interrupted, the signal handler is called in all children processes.
-This effectively means that `KeyboardInterrupt` is injected into all processes.
-If this exception is unhandled, the process is usually terminated but spits
-a nasty exception log with traceback in the terminal (`stderr`).
-  
-If we want to get rid of this exception log, we should establish an exception
-handler to catch the `KeyboardInterrupt` in the `multiprocessing.Process`
-worker method (either `Process.run()` method, or the callback provided as the
-`target` parameter) and then terminate the application.
-
-```python
-def _process_worker():
-    try:
-        __process_worker()
-    except KeyboardInterrupt:
-        print(f'[{multiprocessing.current_process().name}] ... Ctrl+C pressed, terminating ...')
-
-def __process_worker():
-    while True:
-        time.sleep(1)
-
-#
-# ...
-#
-
-with DelayedKeyboardInterrupt():
-    p = multiprocessing.Process(target=_process_worker)
-    p.start()
-```
-
-### Synchronize start of the `multiprocessing.Process` workers
-
-If the `KeyboardInterrupt` happens to be raised before the `target` worker
-function is reached, we'd still get that nasty exception log.  If we want to
-be sure we don't miss this exception, we need to synchronize the process
-creation.
-
-```python
-def _process_worker(process_bootstrapped_event: multiprocessing.Event):
-    try:
-        process_bootstrapped_event.set()
-        __process_worker()
-    except KeyboardInterrupt:
-        print(f'[{multiprocessing.current_process().name}] ... Ctrl+C pressed, terminating ...')
-
-def __process_worker():
-    while True:
-        time.sleep(1)
-
-#
-# ...
-#
-
-with DelayedKeyboardInterrupt():
-    process_bootstrapped_event = multiprocessing.Event()
-    p = multiprocessing.Process(target=_process_worker, args=(process_bootstrapped_event, ))
-    p.start()
-    
-    #
-    # Set some meaningful timeout - we don't want to wait here
-    # infinitelly if the process creation somehow failed.
-    #
-    process_bootstrapped_event.wait(5)
-```
-
 ### Asynchronous code
 
 For graceful shutdown of asynchronous applications, you have to forget about
@@ -278,7 +215,6 @@ executor is busy processing some other tasks - the finalization code
 won't get chance to be executed.
 
 ```python
-
 executor = ThreadPoolExecutor(max_workers=4)
 
 def process():
@@ -377,6 +313,74 @@ def __loop_exception_handler(loop, context: Dict[str, Any]):
         print(f'__loop_exception_handler: unhandled exception: {context}')
 
 loop.set_exception_handler(__loop_exception_handler)
+```
+
+### Don't forget to catch `KeyboardInterrupt` in `multiprocessing.Process` workers
+
+When application uses `multiprocessing.Process` and the application gets
+interrupted, the signal handler is called in all children processes.
+This effectively means that `KeyboardInterrupt` is injected into all processes.
+If this exception is unhandled, the process is usually terminated but spits
+a nasty exception log with traceback in the terminal (`stderr`).
+  
+If we want to get rid of this exception log, we should establish an exception
+handler to catch the `KeyboardInterrupt` in the `multiprocessing.Process`
+worker method (either `Process.run()` method, or the callback provided as the
+`target` parameter) and then terminate the application.
+
+```python
+def _process_worker():
+    try:
+        __process_worker()
+    except KeyboardInterrupt:
+        print(f'[{multiprocessing.current_process().name}] ... Ctrl+C pressed, terminating ...')
+
+def __process_worker():
+    while True:
+        time.sleep(1)
+
+#
+# ...
+#
+
+with DelayedKeyboardInterrupt():
+    p = multiprocessing.Process(target=_process_worker)
+    p.start()
+```
+
+### Synchronize start of the `multiprocessing.Process` workers
+
+If the `KeyboardInterrupt` happens to be raised before the `target` worker
+function is reached, we'd still get that nasty exception log.  If we want to
+be sure we don't miss this exception, we need to synchronize the process
+creation.
+
+```python
+def _process_worker(process_bootstrapped_event: multiprocessing.Event):
+    try:
+        process_bootstrapped_event.set()
+        __process_worker()
+    except KeyboardInterrupt:
+        print(f'[{multiprocessing.current_process().name}] ... Ctrl+C pressed, terminating ...')
+
+def __process_worker():
+    while True:
+        time.sleep(1)
+
+#
+# ...
+#
+
+with DelayedKeyboardInterrupt():
+    process_bootstrapped_event = multiprocessing.Event()
+    p = multiprocessing.Process(target=_process_worker, args=(process_bootstrapped_event, ))
+    p.start()
+    
+    #
+    # Set some meaningful timeout - we don't want to wait here
+    # infinitelly if the process creation somehow failed.
+    #
+    process_bootstrapped_event.wait(5)
 ```
 
 ### License

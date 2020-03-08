@@ -1,7 +1,6 @@
 # =============================================================================
-# Install the signal handlers as the very first thing in the script.
-# This code can be moved into separate python package, but it should
-# be the very first package imported in the main module.
+# DelayedKeyboardInterrupt implementation.
+# This code can be moved into separate python package.
 # =============================================================================
 
 import os
