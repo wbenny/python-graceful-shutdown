@@ -357,6 +357,14 @@ If you're certain that you're going to cleanly shutdown all the
 ```python
 def _process_worker(stop_event: multiprocessing.Event):
     try:
+        #
+        # Because we have our own stop_event, we're going to suppress the
+        # KeyboardInterrupt during the execution of the __process_worker().
+        #
+        # Note that if the parent process dies without setting the stop_event,
+        # this process will be unresponsive to SIGINT/SIGTERM.
+        # The only way to stop this process would be to ruthlessly kill it.
+        #
         with DelayedKeyboardInterrupt():
             __process_worker(stop_event)
 
@@ -387,16 +395,38 @@ be sure we don't miss this exception, we need to synchronize the process
 creation.
 
 ```python
-def _process_worker(process_bootstrapped_event: multiprocessing.Event):
+def _process_worker(
+        process_bootstrapped_event: multiprocessing.Event,
+        stop_event: multiprocessing.Event
+    ):
     try:
-        process_bootstrapped_event.set()
-        __process_worker()
+        #
+        # Because we have our own stop_event, we're going to suppress the
+        # KeyboardInterrupt during the execution of the __process_worker().
+        #
+        # Note that if the parent process dies without setting the stop_event,
+        # this process will be unresponsive to SIGINT/SIGTERM.
+        # The only way to stop this process would be to ruthlessly kill it.
+        #
+        with DelayedKeyboardInterrupt():
+            process_bootstrapped_event.set()
+            __process_worker(
+                process_bootstrapped_event,
+                stop_event
+            )
+
+    #
+    # Keep in mind that the KeyboardInterrupt will get delivered
+    # after leaving from the DelayedKeyboardInterrupt() block.
+    #
     except KeyboardInterrupt:
         print(f'[{multiprocessing.current_process().name}] ... Ctrl+C pressed, terminating ...')
 
-def __process_worker():
-    while True:
-        time.sleep(1)
+def __process_worker(
+        process_bootstrapped_event: multiprocessing.Event,
+        stop_event: multiprocessing.Event
+    ):
+    stop_event.wait()
 
 #
 # ...
@@ -404,7 +434,8 @@ def __process_worker():
 
 with DelayedKeyboardInterrupt():
     process_bootstrapped_event = multiprocessing.Event()
-    p = multiprocessing.Process(target=_process_worker, args=(process_bootstrapped_event, ))
+    stop_event = multiprocessing.Event()
+    p = multiprocessing.Process(target=_process_worker, args=(process_bootstrapped_event, stop_event))
     p.start()
     
     #
@@ -412,6 +443,21 @@ with DelayedKeyboardInterrupt():
     # infinitelly if the process creation somehow failed.
     #
     process_bootstrapped_event.wait(5)
+
+try:
+    #
+    # Let the process run for some time.
+    #
+    time.sleep(5)
+except KeyboardInterrupt:
+    print(f'... Ctrl+C pressed, terminating ...')
+finally:
+    #
+    # And then stop it and wait for graceful termination.
+    #
+    with DelayedKeyboardInterrupt():
+        stop_event.set()
+        p.join()
 ```
 
 ### License
