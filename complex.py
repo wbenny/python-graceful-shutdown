@@ -1105,7 +1105,6 @@ class ApplicationLogger:
         self._listener_bootstrapped_event = mp.Event()
 
         self._queue = mp.Queue()
-        #self._queue.cancel_join_thread()
         self._queue_handler = None                      # type: Optional[logging.Handler]
 
         self._formatter = '%(asctime)-23s | %(processName)-15s | %(threadName)-25s | %(name)-5s | %(levelname)-7s | %(message)s'
