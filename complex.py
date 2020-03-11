@@ -841,10 +841,10 @@ class AsyncService1:
                 await asyncio.sleep(1)
 
                 task_process_number = asyncio.create_task(self.process_number(parameter))
-                await task_process_number
+                await asyncio.shield(task_process_number)
 
                 task_process_string = asyncio.create_task(self.process_string(f'string-{parameter}'))
-                await task_process_string
+                await asyncio.shield(task_process_string)
 
                 await asyncio.sleep(1)
 
