@@ -786,6 +786,14 @@ class AsyncService1:
     #
 
     async def __update_task_worker_unshielded(self):
+        """
+        This worker, when cancelled, returns immediately back
+        to the caller.  Note that the update() task still might
+        remain executing in the ThreadPoolExecutor.
+
+        Because of that, you might get message:
+         "stopped while updating".
+        """
         try:
             while True:
                 await asyncio.sleep(10)
@@ -794,6 +802,10 @@ class AsyncService1:
             log.warning(f'AsyncService1._update_task_worker: cancelled')
 
     async def __update_task_worker_shielded(self):
+        """
+        This worker, when cancelled, waits until the update finishes
+        and then returns back.
+        """
         update_task = None                              # type: Optional[asyncio.Task]
 
         try:
@@ -817,6 +829,14 @@ class AsyncService1:
     #
 
     async def __process_worker_unshielded(self, parameter: int):
+        """
+        This worker, when cancelled, returns immediately back
+        to the caller.  Note that tasks still might remain
+        executing in the ThreadPoolExecutor.
+
+        Because of that, you might get messages:
+         "service got stopped while waiting for the result".
+        """
         try:
             while True:
                 await asyncio.sleep(random.random())
@@ -829,6 +849,10 @@ class AsyncService1:
             log.debug(f'AsyncService1._process_worker: cancelled')
 
     async def __process_worker_shielded(self, parameter: int):
+        """
+        This worker, when cancelled, waits until all tasks finish
+        and then returns back.
+        """
         task_process_number = None                      # type: Optional[asyncio.Task]
         task_process_string = None                      # type: Optional[asyncio.Task]
 
