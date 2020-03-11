@@ -32,6 +32,9 @@ of initialization code, but rather part of the "actual execution".
 
 This repository contains 2 scripts. Both scripts are similar at its core.
 Both scripts have no external dependencies.
+Both scripts have no side-effects (they don't create any files, they don't
+make any network connections, ...), therefore you should not worry about
+executing them.
 They have been tested with **Python 3.8** on Windows & Linux.
 They have very extensive logging.
 
