@@ -1101,7 +1101,7 @@ class Application:
 
 
 class ApplicationLogger:
-    DEFAULT_LEVEL = logging.INFO
+    DEFAULT_LEVEL = logging.DEBUG
 
     LISTENER_WORKER_BOOTSTRAP_TIMEOUT    = 5.0
     LISTENER_WORKER_START_TIMEOUT        = 30.0
