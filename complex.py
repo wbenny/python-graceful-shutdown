@@ -91,7 +91,7 @@ import threading
 import time
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Type, Optional, Any
 from uuid import uuid4
 
 
@@ -709,7 +709,15 @@ class MultiProcessManager:
             log.debug(f'MPM: ... terminated')
 
 
-class AsyncService1:
+class Service:
+    def start(self):
+        raise NotImplementedError()
+
+    def stop(self):
+        raise NotImplementedError()
+
+
+class AsyncService1(Service):
     """
     Asynchronous service that wraps the MultiProcessManager.
     """
@@ -885,7 +893,7 @@ class AsyncService1:
     _process_worker = __process_worker_shielded
 
 
-class AsyncService2:
+class AsyncService2(Service):
     """
     Dummy service that does nothing.
     """
@@ -904,13 +912,13 @@ class AsyncService2:
 
 
 class Application:
-    def __init__(self):
+    def __init__(self, service_factory_list: List[Type[Service]]):
+        self._service_factory_list = service_factory_list
+        self._service_list = []                         # type: List[Service]
+
         self._loop = None                               # type: Optional[asyncio.AbstractEventLoop]
         self._wait_event = None                         # type: Optional[asyncio.Event]
         self._wait_task = None                          # type: Optional[asyncio.Task]
-
-        self._service1 = None                           # type: Optional[AsyncService1]
-        self._service2 = None                           # type: Optional[AsyncService2]
 
     def run(self):
         self._loop = asyncio.new_event_loop()
@@ -964,15 +972,22 @@ class Application:
                 log.warning(f'Application.run: got KeyboardInterrupt during stop')
 
     async def _astart(self):
-        self._service1 = AsyncService1()
-        self._service2 = AsyncService2()
+        for service_factory in self._service_factory_list:
+            service = service_factory()
 
-        await self._service1.start()
-        await self._service2.start()
+            if asyncio.iscoroutinefunction(service.start):
+                await service.start()
+            else:
+                service.start()
+
+            self._service_list.append(service)
 
     async def _astop(self):
-        await self._service2.stop()
-        await self._service1.stop()
+        for service in self._service_list:
+            if asyncio.iscoroutinefunction(service.stop):
+                await service.stop()
+            else:
+                service.stop()
 
     async def _await(self):
         self._wait_event = asyncio.Event()
@@ -1257,7 +1272,7 @@ logger = ApplicationLogger()
 
 
 def main():
-    app = Application()
+    app = Application([AsyncService1, AsyncService2])
     app.run()
 
 
