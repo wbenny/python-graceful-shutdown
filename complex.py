@@ -819,13 +819,10 @@ class AsyncService1:
     async def __process_worker_unshielded(self, parameter: int):
         try:
             while True:
-                #await asyncio.sleep(random.random() * 50)
-                await asyncio.sleep(1)
+                await asyncio.sleep(random.random())
 
                 await self.process_number(parameter)
                 await self.process_string(f'string-{parameter}')
-
-                await asyncio.sleep(1)
 
                 parameter += 1
         except asyncio.CancelledError:
@@ -837,8 +834,7 @@ class AsyncService1:
 
         try:
             while True:
-                #await asyncio.sleep(random.random() * 50)
-                await asyncio.sleep(1)
+                await asyncio.sleep(random.random())
 
                 task_process_number = asyncio.create_task(self.process_number(parameter))
                 await asyncio.shield(task_process_number)
@@ -846,7 +842,6 @@ class AsyncService1:
                 task_process_string = asyncio.create_task(self.process_string(f'string-{parameter}'))
                 await asyncio.shield(task_process_string)
 
-                await asyncio.sleep(1)
 
                 parameter += 1
         except asyncio.CancelledError:
