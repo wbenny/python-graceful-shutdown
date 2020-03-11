@@ -63,17 +63,17 @@ class DelayedKeyboardInterrupt:
         #
         if os.getpid() != self._pid:
             if self._propagate_to_forked_processes is False:
-                print(f'!!! DelayedKeyboardInterrupt._handler: {SIGNAL_TRANSLATION_MAP[sig]} received; '
-                      f'PID mismatch: {os.getpid()=}, {self._pid=}, calling original handler')
+                log.warning(f'DelayedKeyboardInterrupt._handler: {SIGNAL_TRANSLATION_MAP[sig]} received; '
+                            f'PID mismatch: {os.getpid()=}, {self._pid=}, calling original handler')
                 self._old_signal_handler_map[self._sig](self._sig, self._frame)
             elif self._propagate_to_forked_processes is None:
-                print(f'!!! DelayedKeyboardInterrupt._handler: {SIGNAL_TRANSLATION_MAP[sig]} received; '
-                      f'PID mismatch: {os.getpid()=}, ignoring the signal')
+                log.warning(f'DelayedKeyboardInterrupt._handler: {SIGNAL_TRANSLATION_MAP[sig]} received; '
+                            f'PID mismatch: {os.getpid()=}, ignoring the signal')
                 return
             # elif self._propagate_to_forked_processes is True:
             #   ... passthrough
 
-        print(f'!!! DelayedKeyboardInterrupt._handler: {SIGNAL_TRANSLATION_MAP[sig]} received; delaying KeyboardInterrupt')
+        log.warning(f'DelayedKeyboardInterrupt._handler: {SIGNAL_TRANSLATION_MAP[sig]} received; delaying KeyboardInterrupt')
 
 
 # =============================================================================
@@ -81,6 +81,8 @@ class DelayedKeyboardInterrupt:
 # =============================================================================
 
 import asyncio
+import logging
+import logging.handlers
 import multiprocessing as mp
 import queue
 import random
@@ -91,6 +93,9 @@ from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from uuid import uuid4
+
+
+log = logging.getLogger()
 
 
 #
@@ -106,8 +111,9 @@ from uuid import uuid4
 #
 
 PROCESS_WORKER_COUNT                = 4
-THREADPOOL_EXECUTOR_MAX_WORKERS     = 8
-BUSY_TASK_COUNT                     = THREADPOOL_EXECUTOR_MAX_WORKERS - 2  # leave space for scheduling stop()
+THREADPOOL_EXECUTOR_MAX_WORKERS     = PROCESS_WORKER_COUNT
+BUSY_TASK_COUNT                     = THREADPOOL_EXECUTOR_MAX_WORKERS - 2   # leave space for scheduling stop()
+                                                                            # and update()
 
 
 class DummyManager:
@@ -127,7 +133,7 @@ class DummyManager:
         self._version = 1
 
     def process_string(self, parameter: str) -> dict:
-        print(f'DummyManager.process_string({parameter=})')
+        log.info(f'DummyManager.process_string({parameter=})')
         time.sleep(0.5)
         return {
             'version': self._version,
@@ -135,7 +141,7 @@ class DummyManager:
         }
 
     def process_number(self, parameter: int) -> dict:
-        print(f'DummyManager.process_number({parameter=})')
+        log.info(f'DummyManager.process_number({parameter=})')
         time.sleep(0.3)
         return {
             'version': self._version,
@@ -143,7 +149,7 @@ class DummyManager:
         }
 
     def update(self):
-        print(f'DummyManager.update')
+        log.info(f'DummyManager.update')
         time.sleep(5)
         self._version += 1
 
@@ -214,7 +220,8 @@ class MultiProcessManager:
             update_done_event = mp.Event()
 
             process = mp.Process(target=self._process_worker,
-                                 args=(self._input_queue, self._output_queue,
+                                 args=(logger.queue,
+                                       self._input_queue, self._output_queue,
                                        process_bootstrapped_event, process_started_event, process_started_value,
                                        self._update_condition, update_done_event, self._stop_event))
 
@@ -225,55 +232,55 @@ class MultiProcessManager:
             self._update_done_event_list.append(update_done_event)
 
     def start(self):
-        print(f'MPM.start: starting')
+        log.info(f'MPM.start: starting')
 
         try:
             #
             # Start the process workers.
             #
-            print(f'MPM.start: creating processes')
+            log.debug(f'MPM.start: creating processes')
             for process in self._process_list:
                 process.start()
 
             #
             # Wait until all processes reach the _process_worker() function.
             #
-            print(f'MPM.start: waiting for "bootstrapped" events')
+            log.debug(f'MPM.start: waiting for "bootstrapped" events')
             self._wait_for_events(self._process_bootstrapped_event_list,
                                   self.PROCESS_WORKER_BOOTSTRAP_TIMEOUT)
 
             #
             # Wait until all processes are done initializing
             #
-            print(f'MPM.start: waiting for "started" events')
+            log.debug(f'MPM.start: waiting for "started" events')
             self._wait_for_events(self._process_started_event_list,
                                   self.PROCESS_WORKER_START_TIMEOUT)
 
             #
             # Check if all processes initialized successfully.
             #
-            print(f'MPM.start: checking initialization status')
+            log.debug(f'MPM.start: checking initialization status')
             for process_started_value in self._process_started_value_list:
                 if process_started_value.value == 0:
-                    print(f'MPM.start: process failed to start')
+                    log.error(f'MPM.start: process failed to start')
                     raise RuntimeError(f'Process initialization failed')
 
             #
             # Check if all processes are alive.
             #
-            print(f'MPM.start: checking process status')
+            log.debug(f'MPM.start: checking process status')
             for process in self._process_list:
                 if not process.is_alive():
-                    print('MPM.start: process killed')
+                    log.error('MPM.start: process killed')
                     raise RuntimeError(f'Process killed')
 
             #
             # If everything went fine, start the result collector thread.
             #
-            print(f'MPM.start: starting result collector thread')
+            log.debug(f'MPM.start: starting result collector thread')
             self._result_collector_thread.start()
         except (TimeoutError, RuntimeError) as e:
-            print(f'MPM.start: !!! start failed: {e}, killing all processes')
+            log.error(f'MPM.start: start failed: {e}, killing all processes')
             for process in self._process_list:
                 process.kill()
                 process.close()
@@ -281,38 +288,38 @@ class MultiProcessManager:
             self._process_list = []
             raise
 
-        print(f'MPM.start: started')
+        log.info(f'MPM.start: started')
 
     def stop(self):
-        print(f'MPM.stop: stopping')
+        log.info(f'MPM.stop: stopping')
 
         #
         # First, set the stop event.
         #
-        print(f'MPM.stop: waking up worker threads (CommandStop)')
+        log.debug(f'MPM.stop: waking up worker threads (CommandStop)')
         self._stop_event.set()
 
         #
         # Then wake up all worker threads in all processes.
         #
-        print(f'MPM.stop: waking up worker threads (CommandUpdate)')
+        log.debug(f'MPM.stop: waking up worker threads (CommandUpdate)')
         with self._update_condition:
             self._update_condition.notify_all()
 
-        print(f'MPM.stop: waking up worker threads (CommandCallMethod)')
+        log.debug(f'MPM.stop: waking up worker threads (CommandCallMethod)')
         for process in self._process_list:
             self._input_queue.put((None, None, None))
 
         #
         # Wait until all queues are drained and then close them.
         #
-        print(f'MPM.stop: closing input queue')
+        log.debug(f'MPM.stop: closing input queue')
         self._input_queue.close()
 
         #
         # Wait until all processes terminate.
         #
-        print(f'MPM.stop: waiting for processes to terminate')
+        log.debug(f'MPM.stop: waiting for processes to terminate')
         for process in self._process_list:
             process.join()
             process.close()
@@ -321,11 +328,11 @@ class MultiProcessManager:
         # Finally, wake up the result collector thread
         # and wait until it terminates.
         #
-        print(f'MPM.stop: terminating result collector thread')
+        log.debug(f'MPM.stop: terminating result collector thread')
         self._output_queue.put((None, None))
         self._result_collector_thread.join()
 
-        print(f'MPM.stop: closing output queue')
+        log.debug(f'MPM.stop: closing output queue')
         self._output_queue.close()
 
         #
@@ -334,24 +341,24 @@ class MultiProcessManager:
         # The processes are already dead, so any wait on update_done_event
         # would timeout anyway.
         #
-        print(f'MPM.stop: waking up update events')
+        log.debug(f'MPM.stop: waking up update events')
         for update_done_event in self._update_done_event_list:
             update_done_event.set()
 
         #
         # Wake up all waits in _call_method().
         #
-        print(f'MPM.stop: unprocessed tasks: {len(self._result_map)}')
+        log.debug(f'MPM.stop: unprocessed tasks: {len(self._result_map)}')
         for uuid, result in self._result_map.items():
             result.event.set()
 
-        print(f'MPM.stop: stopped')
+        log.info(f'MPM.stop: stopped')
 
     def update(self):
         with self._update_in_progress_lock:
             assert not self._stop_event.is_set()
 
-            print('MPM.update: started')
+            log.info('MPM.update: started')
             with self._update_condition:
                 self._update_condition.notify_all()
 
@@ -366,20 +373,20 @@ class MultiProcessManager:
             # happen.
             #
             if self._stop_event.is_set():
-                print('!!! MPM.update: stopped while updating')
+                log.error('MPM.update: stopped while updating')
                 raise RuntimeError('Stopped while updating')
 
             for update_done_event in self._update_done_event_list:
                 update_done_event.clear()
 
-            print('MPM.update: finished')
+            log.info('MPM.update: finished')
 
     def process_string(self, parameter: str) -> dict:
-        print(f'MPM.process_string({parameter=})')
+        log.info(f'MPM.process_string({parameter=})')
         return self._call_method('process_string', (parameter, ))
 
     def process_number(self, parameter: int) -> dict:
-        print(f'MPM.process_number({parameter=})')
+        log.info(f'MPM.process_number({parameter=})')
         return self._call_method('process_number', (parameter, ))
 
     def _call_method(self, method_name: str, args: tuple):
@@ -389,7 +396,7 @@ class MultiProcessManager:
         # Enqueue RPC-like item in the input queue.
         # The process worker gets it from there.
         #
-        print(f'MPM._call_method({method_name=}, {args=})')
+        log.debug(f'MPM._call_method({method_name=}, {args=})')
         uuid = str(uuid4())
         event = threading.Event()
         result = MultiProcessManagerResultItem(event=event)
@@ -400,16 +407,16 @@ class MultiProcessManager:
         # is poorly synchronized and the input queue is already closed.
         #
         self._input_queue.put((uuid, method_name, args))
-        print(f'MPM._call_method: task "{uuid}" enqueued, waiting')
+        log.debug(f'MPM._call_method: task "{uuid}" enqueued, waiting')
         if not event.wait(self.CALL_METHOD_TIMEOUT):
-            print(f'!!! MPM._call_method: task "{uuid}" timeouted')
+            log.error(f'MPM._call_method: task "{uuid}" timeouted')
             raise TimeoutError()
 
         if self._stop_event.is_set():
-            print(f'MPM._call_method: service got stopped while waiting for the result')
+            log.error(f'MPM._call_method: service got stopped while waiting for the result')
             raise RuntimeError('Stopped while waiting for the result')
 
-        print(f'MPM._call_method: task "{uuid}" done, {result.value=}')
+        log.debug(f'MPM._call_method: task "{uuid}" done, {result.value=}')
 
         value = result.value
         del self._result_map[uuid]
@@ -429,7 +436,7 @@ class MultiProcessManager:
             stop_event: mp.Event,
             result_map: Dict[str, MultiProcessManagerResultItem]
     ):
-        print(f'MPM[collector]: started')
+        log.debug(f'MPM[collector]: started')
 
         while True:
             uuid, value = output_queue.get()
@@ -444,18 +451,19 @@ class MultiProcessManager:
                 #
                 # assert uuid is None
                 # assert value is None
-                print(f'MPM[collector]: stopping')
+                log.debug(f'MPM[collector]: stopping')
                 break
 
-            print(f'MPM[collector]: collecting result {uuid}')
+            log.debug(f'MPM[collector]: collecting result {uuid}')
             result = result_map[uuid]
             result.value = value
             result.event.set()
 
-        print(f'MPM[collector]: stopped')
+        log.debug(f'MPM[collector]: stopped')
 
     @staticmethod
     def _process_worker(
+            logger_queue: mp.Queue,
             input_queue: mp.Queue,
             output_queue: mp.Queue,
             process_bootstrapped_event: mp.Event,
@@ -465,6 +473,8 @@ class MultiProcessManager:
             update_done_event: mp.Event,
             stop_event: mp.Event
     ):
+        ApplicationLogger.configure(logger_queue)
+
         try:
             #
             # Because we have our own stop_event, we're going to suppress the
@@ -479,10 +489,11 @@ class MultiProcessManager:
                 # Worker function reached - signalize that bootstrapping phase
                 # is done.
                 #
-                print(f'MPM[{mp.current_process().name}]: bootstrapped')
+                log.debug(f'MPM: bootstrapped')
                 process_bootstrapped_event.set()
 
                 MultiProcessManager.__process_worker(
+                    logger_queue,
                     input_queue,
                     output_queue,
                     process_bootstrapped_event,
@@ -497,11 +508,12 @@ class MultiProcessManager:
         # after leaving from the DelayedKeyboardInterrupt() block.
         #
         except KeyboardInterrupt:
-            print(f'!!! MPM[{mp.current_process().name}]: KeyboardInterrupt')
+            log.warning(f'MPM: KeyboardInterrupt')
             pass
 
     @staticmethod
     def __process_worker(
+            logger_queue: mp.Queue,
             input_queue: mp.Queue,
             output_queue: mp.Queue,
             process_bootstrapped_event: mp.Event,
@@ -543,7 +555,7 @@ class MultiProcessManager:
             args: tuple
 
             def process(self):
-                print(f'MPM[{mp.current_process().name}]: CommandCallMethod.process({self.uuid=}, {self.method_name=}, {self.args=})')
+                log.debug(f'MPM: CommandCallMethod.process({self.uuid=}, {self.method_name=}, {self.args=})')
                 method = getattr(manager, self.method_name)
                 value = method(*self.args)
                 output_queue.put((self.uuid, value))
@@ -557,7 +569,7 @@ class MultiProcessManager:
                         assert uuid is None
                         assert method_name is None
                         assert args is None
-                        print(f'MPM[{mp.current_process().name}]: stopping CommandCallMethod.worker()')
+                        log.debug(f'MPM: stopping CommandCallMethod.worker()')
                         break
 
                     command_queue.put(
@@ -579,7 +591,7 @@ class MultiProcessManager:
             This command has higher priority than CommandCallMethod.
             """
             def process(self):
-                print(f'MPM[{mp.current_process().name}]: CommandUpdate.process()')
+                log.debug(f'MPM: CommandUpdate.process()')
                 manager.update()
                 update_done_event.set()
 
@@ -590,7 +602,7 @@ class MultiProcessManager:
                         update_condition.wait()
 
                         if stop_event.is_set():
-                            print(f'MPM[{mp.current_process().name}]: stopping CommandUpdate.worker()')
+                            log.debug(f'MPM: stopping CommandUpdate.worker()')
                             break
 
                         command_queue.put(
@@ -606,14 +618,14 @@ class MultiProcessManager:
             It has the highest priority.
             """
             def process(self):
-                print(f'MPM[{mp.current_process().name}] CommandStop.process()')
+                log.debug(f'MPM CommandStop.process()')
                 raise StopProcessWorkerException()
 
             @staticmethod
             def worker():
                 stop_event.wait()
 
-                print(f'MPM[{mp.current_process().name}]: stopping CommandStop.worker()')
+                log.debug(f'MPM: stopping CommandStop.worker()')
 
                 command_queue.put(
                     PrioritizedItem(priority=1,
@@ -647,14 +659,14 @@ class MultiProcessManager:
         # Create command worker threads.
         #
 
-        print(f'MPM[{mp.current_process().name}]: creating command worker threads')
+        log.debug(f'MPM: creating command worker threads')
         thread_list = [
             threading.Thread(target=command.worker)
             for command in command_list
         ]
 
         try:
-            print(f'MPM[{mp.current_process().name}]: starting command worker threads')
+            log.debug(f'MPM: starting command worker threads')
             for thread in thread_list:
                 thread.start()
 
@@ -666,7 +678,7 @@ class MultiProcessManager:
 
             process_started_value.value = 1
             process_started_event.set()
-            print(f'MPM[{mp.current_process().name}]: initialization done')
+            log.debug(f'MPM: initialization done')
 
             while True:
                 try:
@@ -674,15 +686,15 @@ class MultiProcessManager:
                     try:
                         item.command.process()
                     except StopProcessWorkerException:
-                        print(f'!!! MPM[{mp.current_process().name}]: stopping _process_worker()')
+                        log.warning(f'MPM: stopping _process_worker()')
                         break
                 except KeyboardInterrupt:
-                    print(f'!!! MPM[{mp.current_process().name}]: KeyboardInterrupt (inner2)')
+                    log.warning(f'MPM: KeyboardInterrupt (inner2)')
                     raise
                 else:
                     command_queue.task_done()
         except KeyboardInterrupt:
-            print(f'!!! MPM[{mp.current_process().name}]: KeyboardInterrupt (inner1)')
+            log.warning(f'MPM: KeyboardInterrupt (inner1)')
             raise
         finally:
 
@@ -690,11 +702,11 @@ class MultiProcessManager:
             # Gracefully wait until all threads terminate.
             #
 
-            print(f'MPM[{mp.current_process().name}]: waiting for thread cleanup ...')
+            log.debug(f'MPM: waiting for thread cleanup ...')
             for thread in thread_list:
                 if thread.is_alive():
                     thread.join()
-            print(f'MPM[{mp.current_process().name}]: ... terminated')
+            log.debug(f'MPM: ... terminated')
 
 
 class AsyncService1:
@@ -709,43 +721,43 @@ class AsyncService1:
         self._process_worker_task_list = []             # type: List[asyncio.Task]
 
     async def start(self):
-        print(f'AsyncService1: starting')
+        log.debug(f'AsyncService1: starting')
 
-        print(f'AsyncService1: starting MPM')
+        log.debug(f'AsyncService1: starting MPM')
         await asyncio.get_running_loop().run_in_executor(self._executor,
                                                          self._mpm.start)
 
-        print(f'AsyncService1: creating update task')
+        log.debug(f'AsyncService1: creating update task')
         self._update_task = asyncio.create_task(self._update_task_worker())
 
-        print(f'AsyncService1: creating process worker tasks')
+        log.debug(f'AsyncService1: creating process worker tasks')
         for i in range(BUSY_TASK_COUNT):
             self._process_worker_task_list.append(
                 asyncio.create_task(self._process_worker(i * 1000))
             )
-        print(f'AsyncService1: started')
+        log.debug(f'AsyncService1: started')
 
     async def stop(self):
-        print(f'AsyncService1: stopping')
+        log.debug(f'AsyncService1: stopping')
 
-        print(f'AsyncService1: cancelling update task')
+        log.debug(f'AsyncService1: cancelling update task')
         self._update_task.cancel()
         await self._update_task
 
-        print(f'AsyncService1: cancelling process worker tasks')
+        log.debug(f'AsyncService1: cancelling process worker tasks')
         for process_worker_task in self._process_worker_task_list:
             process_worker_task.cancel()
         await asyncio.gather(*self._process_worker_task_list, return_exceptions=True)
 
-        print(f'AsyncService1: stopping MPM')
+        log.debug(f'AsyncService1: stopping MPM')
         await asyncio.get_running_loop().run_in_executor(self._executor,
                                                          self._mpm.stop)
-        print(f'AsyncService1: stopped')
+        log.debug(f'AsyncService1: stopped')
 
     async def update(self):
-        print(f'AsyncService1: updating')
+        log.debug(f'AsyncService1: updating')
         await asyncio.get_running_loop().run_in_executor(self._executor, self._mpm.update)
-        print(f'AsyncService1: updated')
+        log.debug(f'AsyncService1: updated')
 
     async def process_string(self, parameter: str) -> dict:
         return await asyncio.get_running_loop().run_in_executor(self._executor,
@@ -779,7 +791,7 @@ class AsyncService1:
                 await asyncio.sleep(10)
                 await self.update()
         except asyncio.CancelledError:
-            print(f'!!! AsyncService1._update_task_worker: cancelled')
+            log.warning(f'AsyncService1._update_task_worker: cancelled')
 
     async def __update_task_worker_shielded(self):
         update_task = None                              # type: Optional[asyncio.Task]
@@ -791,10 +803,10 @@ class AsyncService1:
                 update_task = asyncio.create_task(self.update())
                 await asyncio.shield(update_task)
         except asyncio.CancelledError:
-            print(f'!!! AsyncService1._update_task_worker: cancelled')
+            log.warning(f'AsyncService1._update_task_worker: cancelled')
 
             if update_task:
-                print(f'!!! AsyncService1._update_task_worker: awaiting update_task')
+                log.warning(f'AsyncService1._update_task_worker: awaiting update_task')
                 await update_task
 
     _update_task_worker = __update_task_worker_shielded
@@ -817,7 +829,7 @@ class AsyncService1:
 
                 parameter += 1
         except asyncio.CancelledError:
-            print(f'AsyncService1._process_worker: cancelled')
+            log.debug(f'AsyncService1._process_worker: cancelled')
 
     async def __process_worker_shielded(self, parameter: int):
         task_process_number = None                      # type: Optional[asyncio.Task]
@@ -838,14 +850,14 @@ class AsyncService1:
 
                 parameter += 1
         except asyncio.CancelledError:
-            print(f'AsyncService1._process_worker: cancelled')
+            log.debug(f'AsyncService1._process_worker: cancelled')
 
             if task_process_number:
-                print(f'AsyncService1._process_worker: awaiting task_process_number')
+                log.debug(f'AsyncService1._process_worker: awaiting task_process_number')
                 await task_process_number
 
             if task_process_string:
-                print(f'AsyncService1._process_worker: awaiting task_process_string')
+                log.debug(f'AsyncService1._process_worker: awaiting task_process_string')
                 await task_process_string
 
     _process_worker = __process_worker_shielded
@@ -859,17 +871,17 @@ class AsyncService2:
         pass
 
     async def start(self):
-        print(f'AsyncService2: starting')
+        log.debug(f'AsyncService2: starting')
         await asyncio.sleep(1)
-        print(f'AsyncService2: started')
+        log.debug(f'AsyncService2: started')
 
     async def stop(self):
-        print(f'AsyncService2: stopping')
+        log.debug(f'AsyncService2: stopping')
         await asyncio.sleep(1)
-        print(f'AsyncService2: stopped')
+        log.debug(f'AsyncService2: stopped')
 
 
-class AsyncApplication:
+class Application:
     def __init__(self):
         self._loop = None                               # type: Optional[asyncio.AbstractEventLoop]
         self._wait_event = None                         # type: Optional[asyncio.Event]
@@ -890,6 +902,7 @@ class AsyncApplication:
 
             try:
                 with DelayedKeyboardInterrupt():
+                    logger.start()
                     self._start()
 
             #
@@ -907,7 +920,7 @@ class AsyncApplication:
             #
 
             except KeyboardInterrupt:
-                print(f'!!! AsyncApplication.run: got KeyboardInterrupt during start')
+                log.warning(f'Application.run: got KeyboardInterrupt during start')
                 raise
 
             #
@@ -915,9 +928,9 @@ class AsyncApplication:
             # Wait for a termination event infinitelly.
             #
 
-            print(f'AsyncApplication.run: entering wait loop')
+            log.debug(f'Application.run: entering wait loop')
             self._wait()
-            print(f'AsyncApplication.run: exiting wait loop')
+            log.debug(f'Application.run: exiting wait loop')
 
         except KeyboardInterrupt:
             #
@@ -926,10 +939,11 @@ class AsyncApplication:
             try:
                 with DelayedKeyboardInterrupt():
                     self._stop()
+                    logger.stop()
             except KeyboardInterrupt:
-                print(f'!!! AsyncApplication.run: got KeyboardInterrupt during stop')
+                log.warning(f'Application.run: got KeyboardInterrupt during stop')
         finally:
-            print(f'AsyncApplication.run: shutting down executor')
+            log.debug(f'Application.run: shutting down executor')
             self._executor.shutdown()
 
     async def _astart(self):
@@ -1007,11 +1021,11 @@ class AsyncApplication:
 
         def __loop_exception_handler(loop, context: Dict[str, Any]):
             if type(context['exception']) == ConnectionResetError:
-                print(f'!!! AsyncApplication._stop.__loop_exception_handler: suppressing ConnectionResetError')
+                log.warning(f'Application._stop.__loop_exception_handler: suppressing ConnectionResetError')
             elif type(context['exception']) == OSError:
-                print(f'!!! AsyncApplication._stop.__loop_exception_handler: suppressing OSError')
+                log.warning(f'Application._stop.__loop_exception_handler: suppressing OSError')
             else:
-                print(f'!!! AsyncApplication._stop.__loop_exception_handler: unhandled exception: {context}')
+                log.warning(f'Application._stop.__loop_exception_handler: unhandled exception: {context}')
 
         self._loop.set_exception_handler(__loop_exception_handler)
 
@@ -1034,7 +1048,7 @@ class AsyncApplication:
             #
             # ... and close the loop.
             #
-            print(f'AsyncApplication._stop: closing event loop')
+            log.debug(f'Application._stop: closing event loop')
             self._loop.close()
 
     def _wait(self):
@@ -1062,7 +1076,7 @@ class AsyncApplication:
         #
 
         to_cancel = asyncio.tasks.all_tasks(self._loop)
-        print(f'AsyncApplication._cancel_all_tasks: cancelling {len(to_cancel)} tasks ...')
+        log.debug(f'Application._cancel_all_tasks: cancelling {len(to_cancel)} tasks ...')
 
         if not to_cancel:
             return
@@ -1086,11 +1100,149 @@ class AsyncApplication:
                 })
 
 
+class ApplicationLogger:
+    DEFAULT_LEVEL = logging.INFO
+
+    LISTENER_WORKER_BOOTSTRAP_TIMEOUT    = 5.0
+    LISTENER_WORKER_START_TIMEOUT        = 30.0
+
+    def __init__(self, level: int = DEFAULT_LEVEL):
+        self._listener_bootstrapped_event = mp.Event()
+
+        self._queue = mp.Queue()
+        #self._queue.cancel_join_thread()
+        self._queue_handler = None                      # type: Optional[logging.Handler]
+
+        self._formatter = '%(asctime)-23s | %(processName)-15s | %(threadName)-25s | %(name)-5s | %(levelname)-7s | %(message)s'
+        self._level = level
+
+        self._listener = mp.Process(target=self._listener_worker,
+                                    args=(self._queue, self._formatter, self._level,
+                                          self._listener_bootstrapped_event))
+
+    def start(self):
+        self._listener.start()
+
+        if not self._listener_bootstrapped_event.wait(self.LISTENER_WORKER_BOOTSTRAP_TIMEOUT):
+            raise TimeoutError()
+
+        if not self._listener.is_alive():
+            raise RuntimeError(f'Process killed')
+
+        #
+        # This must be after the process.start(), to prevent this logger being
+        # shared with the forked listener process.
+        #
+        self._queue_handler = self._create_queue_handler(self.queue, self.level)
+
+    def stop(self):
+        self._queue.put(None)
+
+        self._listener.join()
+        self._listener.close()
+
+        self._queue.close()
+
+        logger = logging.getLogger()
+        logger.removeHandler(self._queue_handler)
+        self._create_stream_handler(self.formatter, self.level)
+
+    @property
+    def formatter(self) -> str:
+        return self._formatter
+
+    @formatter.setter
+    def formatter(self, value: str):
+        self._formatter = value
+
+    @property
+    def level(self) -> int:
+        return self._level
+
+    @property
+    def queue(self):
+        return self._queue
+
+    @staticmethod
+    def configure(queue: mp.Queue, level: int = DEFAULT_LEVEL) -> logging.Handler:
+        return ApplicationLogger._create_queue_handler(queue, level)
+
+    @staticmethod
+    def _create_queue_handler(queue: mp.Queue, level: int = DEFAULT_LEVEL) -> logging.Handler:
+        handler = logging.handlers.QueueHandler(queue)
+
+        logger = logging.getLogger()
+        logger.addHandler(handler)
+
+        logger.setLevel(level)
+
+        return handler
+
+    @staticmethod
+    def _create_stream_handler(formatter: str, level: int) -> logging.Handler:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter(formatter))
+
+        logger = logging.getLogger()
+        logger.addHandler(handler)
+
+        logger.setLevel(level)
+
+        return handler
+
+    @staticmethod
+    def _listener_worker(
+            queue: mp.Queue,
+            formatter: str,
+            level: int,
+            listener_bootstrapped_event: mp.Event,
+    ):
+        try:
+            with DelayedKeyboardInterrupt():
+                ApplicationLogger._create_stream_handler(formatter, level)
+
+                ApplicationLogger.__listener_worker(
+                    queue,
+                    formatter,
+                    level,
+                    listener_bootstrapped_event
+                )
+        except KeyboardInterrupt:
+            pass
+
+    @staticmethod
+    def __listener_worker(
+            queue: mp.Queue,
+            formatter: str,
+            level: int,
+            listener_bootstrapped_event: mp.Event,
+    ):
+        listener_bootstrapped_event.set()
+
+        while True:
+            try:
+                log_record = queue.get()
+            except InterruptedError:
+                #
+                # Raised when WaitForSingleObject() is interrupted by Ctrl+C.
+                # Ignore this exception and wait for the "None" log_record that
+                # will shutdown us gracefully.
+                #
+                continue
+
+            if log_record is None:
+                break
+
+            logger = logging.getLogger(log_record.name)
+            logger.handle(log_record)
+
+
+logger = ApplicationLogger()
+
+
 def main():
-    print(f'main: begin')
-    app = AsyncApplication()
+    app = Application()
     app.run()
-    print(f'main: end')
 
 
 if __name__ == '__main__':
