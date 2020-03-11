@@ -714,8 +714,8 @@ class AsyncService1:
     Asynchronous service that wraps the MultiProcessManager.
     """
 
-    def __init__(self, executor: Executor):
-        self._executor = executor
+    def __init__(self):
+        self._executor = ThreadPoolExecutor(max_workers=THREADPOOL_EXECUTOR_MAX_WORKERS)
         self._mpm = MultiProcessManager(process_worker_count=PROCESS_WORKER_COUNT)
         self._update_task = None                        # type: Optional[asyncio.Task]
         self._process_worker_task_list = []             # type: List[asyncio.Task]
@@ -752,6 +752,10 @@ class AsyncService1:
         log.debug(f'AsyncService1: stopping MPM')
         await asyncio.get_running_loop().run_in_executor(self._executor,
                                                          self._mpm.stop)
+
+        log.debug(f'AsyncService1: shutting down executor')
+        self._executor.shutdown()
+
         log.debug(f'AsyncService1: stopped')
 
     async def update(self):
@@ -866,7 +870,6 @@ class AsyncService1:
                 task_process_string = asyncio.create_task(self.process_string(f'string-{parameter}'))
                 await asyncio.shield(task_process_string)
 
-
                 parameter += 1
         except asyncio.CancelledError:
             log.debug(f'AsyncService1._process_worker: cancelled')
@@ -886,7 +889,7 @@ class AsyncService2:
     """
     Dummy service that does nothing.
     """
-    def __init__(self, executor: Executor):
+    def __init__(self):
         pass
 
     async def start(self):
@@ -906,13 +909,11 @@ class Application:
         self._wait_event = None                         # type: Optional[asyncio.Event]
         self._wait_task = None                          # type: Optional[asyncio.Task]
 
-        self._executor = None                           # type: Optional[Executor]
         self._service1 = None                           # type: Optional[AsyncService1]
         self._service2 = None                           # type: Optional[AsyncService2]
 
     def run(self):
         self._loop = asyncio.new_event_loop()
-        self._executor = ThreadPoolExecutor(max_workers=THREADPOOL_EXECUTOR_MAX_WORKERS)
 
         try:
             #
@@ -961,13 +962,10 @@ class Application:
                     logger.stop()
             except KeyboardInterrupt:
                 log.warning(f'Application.run: got KeyboardInterrupt during stop')
-        finally:
-            log.debug(f'Application.run: shutting down executor')
-            self._executor.shutdown()
 
     async def _astart(self):
-        self._service1 = AsyncService1(self._executor)
-        self._service2 = AsyncService2(self._executor)
+        self._service1 = AsyncService1()
+        self._service2 = AsyncService2()
 
         await self._service1.start()
         await self._service2.start()
